@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StorePolicyRuleRequest;
 use App\Models\AuditLog;
 use App\Models\KnowledgeDocument;
 use App\Models\PolicyRule;
@@ -18,15 +19,12 @@ class PolicyRuleController extends Controller
         return response()->json($rules);
     }
 
-    public function store($documentId, Request $request)
+    public function store($documentId, StorePolicyRuleRequest $request)
     {
         $doc = KnowledgeDocument::findOrFail($documentId);
         $this->authorizeDocumentAccess($doc, $request->user(), true);
 
-        $data = $request->validate([
-            'rule_type' => 'required|string',
-            'description' => 'nullable|string',
-        ]);
+        $data = $request->validated();
 
         $rule = PolicyRule::create([
             'knowledge_document_id' => $doc->id,
@@ -38,8 +36,8 @@ class PolicyRuleController extends Controller
             'user_id' => $request->user()->id,
             'action' => 'CREATE_POLICY_RULE',
             'action_type' => 'CREATE',
-            'entity_type' => 'KnowledgeDocument',
-            'entity_id' => $doc->id,
+            'entity_type' => 'PolicyRule',
+            'entity_id' => $rule->id,
         ]);
 
         return response()->json($rule, 201);

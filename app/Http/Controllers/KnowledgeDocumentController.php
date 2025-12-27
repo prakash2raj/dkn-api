@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreKnowledgeDocumentRequest;
 use App\Models\AuditLog;
 use App\Models\KnowledgeDocument;
 use App\Models\Recommendation;
@@ -67,17 +68,12 @@ class KnowledgeDocumentController extends Controller
         return response()->json($docs);
     }
 
-    public function store(Request $request)
+    public function store(StoreKnowledgeDocumentRequest $request)
     {
-        $data = $request->validate([
-            'title' => 'required',
-            'description' => 'nullable',
-            'confidentiality' => 'required',
-            'project_id' => 'nullable|exists:projects,id',
-            'workspace_id' => 'nullable|exists:workspaces,id',
-            'tag_ids' => 'array',
-            'tag_ids.*' => 'exists:tags,id'
-        ]);
+        $data = $request->validated();
+        $user = $request->user();
+
+        $this->enforceRegulatoryConstraints($user, $data['confidentiality']);
 
         $doc = KnowledgeDocument::create([
             'title' => $data['title'],
@@ -85,7 +81,7 @@ class KnowledgeDocumentController extends Controller
             'status' => 'PENDING_VALIDATION',
             'confidentiality' => $data['confidentiality'],
             'version' => 1,
-            'created_by' => $request->user()->id,
+            'created_by' => $user->id,
             'project_id' => $data['project_id'] ?? null,
             'workspace_id' => $data['workspace_id'] ?? null
         ]);
@@ -95,7 +91,7 @@ class KnowledgeDocumentController extends Controller
         }
 
         AuditLog::create([
-            'user_id' => $request->user()->id,
+            'user_id' => $user->id,
             'action' => 'UPLOAD_DOCUMENT',
             'action_type' => 'CREATE',
             'entity_type' => 'KnowledgeDocument',
@@ -103,6 +99,29 @@ class KnowledgeDocumentController extends Controller
         ]);
 
         return response()->json($doc, 201);
+    }
+
+    private function enforceRegulatoryConstraints($user, string $confidentiality): void
+    {
+        $user->loadMissing('office.regulatoryConstraints');
+
+        $office = $user->office;
+        if (!$office) {
+            abort(403, 'Office assignment required to upload documents.');
+        }
+
+        $constraint = $office->regulatoryConstraints->first();
+        if (!$constraint) {
+            abort(403, 'No regulatory constraints configured for your office.');
+        }
+
+        $isPrivileged = in_array($user->role, ['CHAMPION', 'GOVERNANCE', 'ADMIN']);
+        if (in_array($confidentiality, ['INTERNAL', 'RESTRICTED'])
+            && $user->region
+            && $constraint->region !== $user->region
+            && !$isPrivileged) {
+            abort(403, 'Upload blocked due to data residency requirements for your region.');
+        }
     }
 
     public function validateDoc($id, Request $request)

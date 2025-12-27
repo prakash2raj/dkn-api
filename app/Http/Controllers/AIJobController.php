@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StoreAIJobRequest;
 use App\Models\AuditLog;
 use App\Models\AIJob;
 use App\Models\KnowledgeDocument;
@@ -17,15 +18,12 @@ class AIJobController extends Controller
         return response()->json($doc->aiJobs);
     }
 
-    public function store($documentId, Request $request)
+    public function store($documentId, StoreAIJobRequest $request)
     {
         $doc = KnowledgeDocument::findOrFail($documentId);
         $this->authorizeDocumentAccess($doc, $request->user(), true);
 
-        $data = $request->validate([
-            'job_type' => 'required|string',
-            'status' => 'nullable|string',
-        ]);
+        $data = $request->validated();
 
         $job = AIJob::create([
             'knowledge_document_id' => $doc->id,
@@ -37,8 +35,8 @@ class AIJobController extends Controller
             'user_id' => $request->user()->id,
             'action' => 'CREATE_AI_JOB',
             'action_type' => 'CREATE',
-            'entity_type' => 'KnowledgeDocument',
-            'entity_id' => $doc->id,
+            'entity_type' => 'AIJob',
+            'entity_id' => $job->id,
         ]);
 
         return response()->json($job, 201);
