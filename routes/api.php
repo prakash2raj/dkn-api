@@ -37,6 +37,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/documents', [KnowledgeDocumentController::class, 'index']);
     Route::get('/documents/mine', [KnowledgeDocumentController::class, 'mine']);
     Route::post('/documents', [KnowledgeDocumentController::class, 'store']);
+    Route::put('/documents/{id}', [KnowledgeDocumentController::class, 'update']);
+    Route::delete('/documents/{id}', [KnowledgeDocumentController::class, 'destroy']);
     Route::get('/recommendations', [RecommendationController::class, 'index']);
     Route::get('/projects', [ProjectController::class, 'index']);
     Route::get('/workspaces', [WorkspaceController::class, 'index']);

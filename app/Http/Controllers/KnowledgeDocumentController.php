@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StoreKnowledgeDocumentRequest;
+use App\Http\Requests\UpdateKnowledgeDocumentRequest;
 use App\Models\AuditLog;
 use App\Models\KnowledgeDocument;
 use App\Models\Recommendation;
@@ -101,6 +102,79 @@ class KnowledgeDocumentController extends Controller
         return response()->json($doc, 201);
     }
 
+    public function update($id, UpdateKnowledgeDocumentRequest $request)
+    {
+        $doc = KnowledgeDocument::with('tags')->findOrFail($id);
+        $user = $request->user();
+
+        $this->authorizeDocumentModification($doc, $user);
+
+        $data = $request->validated();
+
+        if (isset($data['status']) && $data['status'] === 'VALIDATED' && !$this->isPrivilegedRole($user)) {
+            return response()->json(['message' => 'Only governance roles can validate documents'], 403);
+        }
+
+        if (isset($data['confidentiality'])) {
+            $this->enforceRegulatoryConstraints($user, $data['confidentiality']);
+        }
+
+        $doc->fill(collect($data)->except('tag_ids')->toArray());
+
+        $attributeChanges = $doc->isDirty();
+        $tagChanges = false;
+
+        if (array_key_exists('tag_ids', $data)) {
+            $incomingTags = $data['tag_ids'] ?? [];
+            $currentTags = $doc->tags()->pluck('tags.id')->sort()->values()->all();
+            $incomingSorted = collect($incomingTags)->sort()->values()->all();
+            $tagChanges = $currentTags !== $incomingSorted;
+        }
+
+        if ($attributeChanges || $tagChanges) {
+            $doc->version += 1;
+            $doc->save();
+        }
+
+        if (array_key_exists('tag_ids', $data)) {
+            $doc->tags()->sync($data['tag_ids']);
+        }
+
+        $doc->load('creator', 'project', 'workspace', 'tags');
+
+        if ($attributeChanges || $tagChanges) {
+            AuditLog::create([
+                'user_id' => $user->id,
+                'action' => 'UPDATE_DOCUMENT',
+                'action_type' => 'UPDATE',
+                'entity_type' => 'KnowledgeDocument',
+                'entity_id' => $doc->id,
+            ]);
+        }
+
+        return response()->json($doc);
+    }
+
+    public function destroy($id, Request $request)
+    {
+        $doc = KnowledgeDocument::findOrFail($id);
+        $user = $request->user();
+
+        $this->authorizeDocumentModification($doc, $user);
+
+        $doc->delete();
+
+        AuditLog::create([
+            'user_id' => $user->id,
+            'action' => 'DELETE_DOCUMENT',
+            'action_type' => 'DELETE',
+            'entity_type' => 'KnowledgeDocument',
+            'entity_id' => $id,
+        ]);
+
+        return response()->json(['message' => 'Document deleted']);
+    }
+
     private function enforceRegulatoryConstraints($user, string $confidentiality): void
     {
         $user->loadMissing('office.regulatoryConstraints');
@@ -122,6 +196,25 @@ class KnowledgeDocumentController extends Controller
             && !$isPrivileged) {
             abort(403, 'Upload blocked due to data residency requirements for your region.');
         }
+    }
+
+    private function authorizeDocumentModification(KnowledgeDocument $doc, $user): void
+    {
+        $isOwner = $doc->created_by === $user->id;
+        $isPrivileged = $this->isPrivilegedRole($user);
+
+        if (in_array($doc->status, ['VALIDATED', 'ARCHIVED']) && !$isPrivileged) {
+            abort(403, 'Validated or archived documents can only be changed by governance roles.');
+        }
+
+        if (!$isOwner && !$isPrivileged) {
+            abort(403, 'Access denied');
+        }
+    }
+
+    private function isPrivilegedRole($user): bool
+    {
+        return in_array($user->role, ['CHAMPION', 'GOVERNANCE', 'ADMIN']);
     }
 
     public function validateDoc($id, Request $request)
